@@ -1,48 +1,71 @@
-#VERSION := $(shell git describe --tags)
-GITCOMMIT := $(shell git rev-parse HEAD)
-PROJECTNAME := $(shell basename "$(PWD)")
-DATE := $(shell date "+%Y-%m-%d@%H:%M:%S")
+CMDPATH := ./cmd/kubeconfgen
+BINARY  := kubeconfgen
+BUILDDIR := build
 
-# Go related variables.
-GOVER=1.13
-GOCMD=go
-GOBASE := $(shell pwd)
-GOBIN := $(GOBASE)/bin
+GIT_COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
+BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+GO_VERSION := $(shell go env GOVERSION)
+OS         := $(shell go env GOOS)
+ARCH       := $(shell go env GOARCH)
 
-# Environment info
-ARCH=amd64
-OS=linux
-
-# Use linker flags to provide version/build settings
-LDFLAGS=-ldflags "-s -w -X=main.GitCommit=$(GITCOMMIT) -X=main.BuildDate=$(DATE) -X=main.GoVersion=$(GOVER) -X=main.OperatingSystem=$(OS) -X=main.Architecture=$(ARCH)"
+LDFLAGS := -s -w \
+	-X main.GitCommit=$(GIT_COMMIT) \
+	-X main.BuildDate=$(BUILD_DATE) \
+	-X main.GoVersion=$(GO_VERSION) \
+	-X main.OperatingSystem=$(OS) \
+	-X main.Architecture=$(ARCH)
 
 # Make is verbose in Linux. Make it silent.
 MAKEFLAGS += --silent
 
-## exec: Run given command, wrapped with custom GOPATH. e.g; make exec run="go test ./..."
-exec:
-	@GOPATH=$(GOPATH) GOBIN=$(GOBIN) $(run)
+.PHONY: test testcov dep vet lint clean run install build help all
 
-## clean: Clean build files. Runs `go clean` internally.
+## test: Run tests.
+test:
+	go test -v ./...
+
+## testcov: Run tests with a coverage report.
+testcov:
+	go test -v -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out
+
+## dep: Download and tidy module dependencies.
+dep:
+	go mod download
+	go mod tidy
+
+## vet: Run go vet.
+vet:
+	go vet ./...
+
+## lint: Run golangci-lint.
+lint:
+	golangci-lint run -v --timeout=15m ./...
+
+## clean: Remove build artifacts.
 clean:
-	@-rm $(GOBIN)/$(PROJECTNAME) 2> /dev/null
+	rm -rf $(BUILDDIR)
+	rm -f coverage.out
 
-## build-linux: Build Linux amd64 binary locally.
-build-linux:
-	@echo " $(LDFLAGS)"
-	@echo "  >  Building Linux binary..."
-	@GOOS=$(OS) GOARCH=$(ARCH) go build $(LDFLAGS) -o $(GOBIN)/$(PROJECTNAME) $(GOBASE)/cmd/$(PROJECTNAME)/$(wildcard *.go)
+## run: Run the application.
+run:
+	go run $(CMDPATH)
 
-## build-linux-docker: Build Linux amd64 binary locally but through a Docker container.
-build-linux-docker:
-	@echo " > Build Linux binary in a Docker container..."
-	@docker run --rm -it -v $(GOBASE):/$(PROJECTNAME) -w="/$(PROJECTNAME)" golang:$(GOVER)-alpine sh -c "GOOS=$(OS) GOARCH=$(ARCH) go build $(LDFLAGS) -o $(GOBIN)/$(PROJECTNAME) ./cmd/$(PROJECTNAME)/$(wildcard *.go)"
+## install: Install the binary into GOPATH/bin.
+install:
+	go install $(CMDPATH)
 
+## build: Build the binary into $(BUILDDIR)/$(BINARY).
+build:
+	mkdir -p $(BUILDDIR)
+	go build -ldflags '$(LDFLAGS)' -o $(BUILDDIR)/$(BINARY) $(CMDPATH)
+
+## help: Show this help.
 .PHONY: help
 all: help
 help: Makefile
 	@echo
-	@echo " Choose a command run in "$(PROJECTNAME)":"
+	@echo " Choose a command run in $(BINARY):"
 	@echo
-	@sed -n 's/^##//p' $< | column -t -s ':' |  sed -e 's/^/ /'
+	@sed -n 's/^##//p' $< | column -t -s ':' | sed -e 's/^/ /'
 	@echo
